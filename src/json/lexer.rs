@@ -27,6 +27,9 @@ pub enum LexerError {
 
     #[error("Parsing number failed due to: {0}")]
     NotAFloat(ParseFloatError),
+
+    #[error("Could not lex boolean")]
+    NotABool,
 }
 
 // (The content between quotes, the index of the next char after the quote)
@@ -34,12 +37,34 @@ pub type LexStringOutput = (String, usize);
 
 pub type LexNumberOutput = (f32, usize);
 
+pub type LexBoolOutput = (bool, usize);
+
 fn crop_content(json_content: &str, index: usize) -> &str {
     if index == json_content.len() - 1 {
         ""
     } else {
         &json_content[(index + 1)..]
     }
+}
+
+pub fn lex_bool(json_content: &str) -> Result<LexBoolOutput, LexerError> {
+    if json_content.is_empty() {
+        return Err(LexerError::EmptyInput);
+    }
+
+    let mut result: bool = true;
+    let mut last_processed_index: usize = 0;
+    if json_content.starts_with("true") {
+        result = true;
+        last_processed_index = 3;
+    } else if json_content.starts_with("false") {
+        result = false;
+        last_processed_index = 4;
+    } else {
+        return Err(LexerError::NotABool);
+    }
+
+    Ok((result, last_processed_index))
 }
 
 pub fn lex_number(json_content: &str) -> Result<LexNumberOutput, LexerError> {
@@ -63,6 +88,8 @@ pub fn lex_number(json_content: &str) -> Result<LexNumberOutput, LexerError> {
         if ch.is_ascii_digit() || ch == '.' {
             number_result.push(ch);
             last_processed_index = index;
+        } else if ch == '\n' {
+            break;
         } else {
             return Err(LexerError::NotANumber);
         }
@@ -126,6 +153,17 @@ pub fn lex(json_content: &str) -> Vec<String> {
         let lex_string_result = lex_string(json_content);
         if let Ok((accumulated_string, last_processed_index)) = lex_string_result {
             tokens.push(accumulated_string);
+            json_content = crop_content(json_content, last_processed_index);
+        }
+
+        let lex_number_result = lex_number(json_content);
+        if let Ok((number, last_processed_index)) = lex_number_result {
+            tokens.push(number.to_string());
+            json_content = crop_content(json_content, last_processed_index);
+        }
+
+        if let Ok((result, last_processed_index)) = lex_bool(json_content) {
+            tokens.push(result.to_string());
             json_content = crop_content(json_content, last_processed_index);
         } else {
             // the following snippet just adds any character that is not a string to
@@ -246,5 +284,65 @@ pub mod lexer_tests {
 
         assert_eq!(number, -123.40);
         assert_eq!(last_processed_index, 5);
+    }
+
+    #[test]
+    pub fn test_lext_json_containing_number() {
+        let json = r#"
+{
+    "key":42
+}
+"#;
+        let json = json.trim();
+
+        let res = lex(json);
+        let expected = vec![
+            String::from("{"),
+            String::from("key"),
+            String::from(":"),
+            String::from("42"),
+            String::from("}"),
+        ];
+
+        assert_eq!(res, expected);
+    }
+
+    #[test]
+    pub fn test_lex_bool_true() {
+        let input: &str = "true";
+        let (result, last_processed_index) = lex_bool(input).unwrap();
+
+        assert_eq!(result, true);
+        assert_eq!(last_processed_index, 3);
+    }
+
+    #[test]
+    pub fn test_lex_bool_false() {
+        let input: &str = "false";
+        let (result, last_processed_index) = lex_bool(input).unwrap();
+
+        assert_eq!(result, false);
+        assert_eq!(last_processed_index, 4);
+    }
+
+    #[test]
+    pub fn test_lext_json_containing_bool() {
+        let json = r#"
+{
+    "key":true
+}
+"#;
+        let json = json.trim();
+
+        let res = lex(json);
+        let expected = vec![
+            String::from("{"),
+            String::from("key"),
+            String::from(":"),
+            String::from("true"),
+            String::from("}"),
+        ];
+
+        assert_eq!(res, expected);
     }
 }
