@@ -46,6 +46,7 @@ pub enum Token {
     Number(f32),
     Boolean(bool),
     JsonCharacter(Character),
+    Null,
     // this one exists for testing purposes only
     Other(char),
 }
@@ -78,7 +79,7 @@ impl DerefMut for TokenStream {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub enum LexerError {
     #[error("No input was provided")]
     EmptyInput,
@@ -97,6 +98,9 @@ pub enum LexerError {
 
     #[error("Character is a not a specific Json character")]
     NotAJsonChar,
+
+    #[error("Could not lex Null")]
+    NotANull,
 }
 
 // (The content between quotes, the index of the next char after the quote)
@@ -106,12 +110,31 @@ pub type LexNumberOutput = (f32, usize);
 
 pub type LexBoolOutput = (bool, usize);
 
+pub type LexNullOutput = (Token, usize);
+
 fn crop_content(json_content: &str, index: usize) -> &str {
     if index == json_content.len() - 1 {
         ""
     } else {
         &json_content[(index + 1)..]
     }
+}
+
+pub fn lex_null(json_content: &str) -> Result<LexNullOutput, LexerError> {
+    if json_content.is_empty() {
+        return Err(LexerError::EmptyInput);
+    }
+
+    let result: Token;
+    let last_processed_index: usize;
+    if json_content.starts_with("null\n") || json_content.starts_with("null,") {
+        result = Token::Null;
+        last_processed_index = 3; // directly the end of the "null" word
+    } else {
+        return Err(LexerError::NotANull);
+    }
+
+    Ok((result, last_processed_index))
 }
 
 pub fn lex_bool(json_content: &str) -> Result<LexBoolOutput, LexerError> {
@@ -231,6 +254,11 @@ pub fn lex(json_content: &str) -> TokenStream {
 
         if let Ok((result, last_processed_index)) = lex_bool(json_content) {
             tokens.push(Token::Boolean(result));
+            json_content = crop_content(json_content, last_processed_index);
+        }
+
+        if let Ok((result, last_processed_index)) = lex_null(json_content) {
+            tokens.push(result);
             json_content = crop_content(json_content, last_processed_index);
         } else {
             // the following snippet just adds any character that is not a string to
@@ -357,7 +385,7 @@ pub mod lexer_tests {
     }
 
     #[test]
-    pub fn test_lext_json_containing_number() {
+    pub fn test_lex_json_containing_number() {
         let json = r#"
 {
     "key":42
@@ -397,7 +425,24 @@ pub mod lexer_tests {
     }
 
     #[test]
-    pub fn test_lext_json_containing_bool() {
+    pub fn test_lex_null() {
+        let input: &str = "null,";
+        let (result, last_processed_index) = lex_null(input).unwrap();
+
+        assert_eq!(result, Token::Null);
+        assert_eq!(last_processed_index, 3);
+    }
+
+    #[test]
+    pub fn test_lex_null_error() {
+        let input: &str = "null";
+        let result = lex_null(input);
+
+        assert_eq!(result, Err(LexerError::NotANull));
+    }
+
+    #[test]
+    pub fn test_lex_json_containing_bool() {
         let json = r#"
 {
     "key":true
@@ -418,12 +463,13 @@ pub mod lexer_tests {
     }
 
     #[test]
-    pub fn test_lext_json_containing_all() {
+    pub fn test_lex_json_containing_all() {
         let json = r#"
 {
     "key1":"string",
     "key2":42,
-    "key3":true
+    "key3":true,
+    "key4":null
 }
 "#;
         let json = json.trim();
@@ -442,6 +488,10 @@ pub mod lexer_tests {
             Token::JsonString("key3".to_string()),
             ':'.try_into().unwrap(),
             Token::Boolean(true),
+            ','.try_into().unwrap(),
+            Token::JsonString("key4".to_string()),
+            ':'.try_into().unwrap(),
+            Token::Null,
             '}'.try_into().unwrap(),
         ];
         assert_eq!(*res, expected);
