@@ -10,6 +10,7 @@ pub mod constants {
     pub const RIGHT_BRACE: char = '}';
     pub const COLUMN: char = ':';
     pub const NEW_LINE: char = '\n';
+    pub const COMMA: char = ',';
 }
 
 #[derive(Debug, PartialEq, Default)]
@@ -32,6 +33,7 @@ impl TryFrom<char> for Character {
             || ch == constants::RIGHT_BRACE
             || ch == constants::COLUMN
             || ch == constants::NEW_LINE
+            || ch == constants::COMMA
         {
             return Ok(Character(ch));
         }
@@ -101,6 +103,9 @@ pub enum LexerError {
 
     #[error("Could not lex Null")]
     NotANull,
+
+    #[error("Failed to lex the input json")]
+    InvalidJson,
 }
 
 // (The content between quotes, the index of the next char after the quote)
@@ -231,7 +236,15 @@ pub fn lex_string(json_content: &str) -> Result<LexStringOutput, LexerError> {
     Ok((accumulated_string, last_processed_character))
 }
 
-pub fn lex(json_content: &str) -> TokenStream {
+pub fn lex_character(json_content: &str) -> Result<Token, LexerError> {
+    if json_content.is_empty() {
+        return Err(LexerError::EmptyInput);
+    }
+
+    Ok(json_content.chars().next().unwrap().into())
+}
+
+pub fn lex(json_content: &str) -> Result<TokenStream, LexerError> {
     let mut json_content = json_content.trim();
     let mut tokens = TokenStream::default();
 
@@ -260,21 +273,44 @@ pub fn lex(json_content: &str) -> TokenStream {
         if let Ok((result, last_processed_index)) = lex_null(json_content) {
             tokens.push(result);
             json_content = crop_content(json_content, last_processed_index);
+        }
+
+        if let Ok(result) = lex_character(json_content) {
+            match result {
+                Token::JsonCharacter(_) => {
+                    tokens.push(result);
+                }
+                Token::Other(ch) => {
+                    if ch == ' ' {
+                        json_content = crop_content(json_content, 0);
+                        continue;
+                    } else {
+                        return Err(LexerError::InvalidJson);
+                    }
+                }
+                _ => {
+                    return Err(LexerError::InvalidJson);
+                }
+            }
+
+            json_content = crop_content(json_content, 0); // crop at 0 because we parsed only 1 character
         } else {
             // the following snippet just adds any character that is not a string to
             // the token list.
             // TODO: This should be part of the parsing itself.
 
-            let first = json_content.chars().next().unwrap();
-            if first != ' ' && first != '\n' {
-                tokens.push(first.into());
-            }
+            // let first = json_content.chars().next().unwrap();
+            // if first != ' ' && first != '\n' {
+            //     tokens.push(first.into());
+            // }
 
-            json_content = crop_content(json_content, 0);
+            // json_content = crop_content(json_content, 0);
+
+            return Err(LexerError::InvalidJson);
         }
     }
 
-    tokens
+    Ok(tokens)
 }
 
 #[cfg(test)]
@@ -312,8 +348,12 @@ pub mod lexer_tests {
         "#;
         let json = json.trim();
 
-        let res = lex(json);
-        let expected = vec!['{'.try_into().unwrap(), '}'.try_into().unwrap()];
+        let res = lex(json).unwrap();
+        let expected = vec![
+            '{'.try_into().unwrap(),
+            '\n'.try_into().unwrap(),
+            '}'.try_into().unwrap(),
+        ];
         assert_eq!(*res, expected);
     }
 
@@ -326,13 +366,15 @@ pub mod lexer_tests {
 "#;
         let json = json.trim();
 
-        let res = lex(json);
+        let res = lex(json).unwrap();
 
         let expected = vec![
             '{'.try_into().unwrap(),
+            '\n'.try_into().unwrap(),
             Token::JsonString("key".to_string()),
             ':'.try_into().unwrap(),
             Token::JsonString("value".to_string()),
+            '\n'.try_into().unwrap(),
             '}'.try_into().unwrap(),
         ];
 
@@ -393,13 +435,15 @@ pub mod lexer_tests {
 "#;
         let json = json.trim();
 
-        let res = lex(json);
+        let res = lex(json).unwrap();
 
         let expected = vec![
             '{'.try_into().unwrap(),
+            '\n'.try_into().unwrap(),
             Token::JsonString("key".to_string()),
             ':'.try_into().unwrap(),
             Token::Number(42.0),
+            '\n'.try_into().unwrap(),
             '}'.try_into().unwrap(),
         ];
 
@@ -450,12 +494,14 @@ pub mod lexer_tests {
 "#;
         let json = json.trim();
 
-        let res = lex(json);
+        let res = lex(json).unwrap();
         let expected = vec![
             '{'.try_into().unwrap(),
+            '\n'.try_into().unwrap(),
             Token::JsonString("key".to_string()),
             ':'.try_into().unwrap(),
             Token::Boolean(true),
+            '\n'.try_into().unwrap(),
             '}'.try_into().unwrap(),
         ];
 
@@ -474,24 +520,29 @@ pub mod lexer_tests {
 "#;
         let json = json.trim();
 
-        let res = lex(json);
+        let res = lex(json).unwrap();
         let expected = vec![
             '{'.try_into().unwrap(),
+            '\n'.try_into().unwrap(),
             Token::JsonString("key1".to_string()),
             ':'.try_into().unwrap(),
             Token::JsonString("string".to_string()),
             ','.try_into().unwrap(),
+            '\n'.try_into().unwrap(),
             Token::JsonString("key2".to_string()),
             ':'.try_into().unwrap(),
             Token::Number(42.0),
             ','.try_into().unwrap(),
+            '\n'.try_into().unwrap(),
             Token::JsonString("key3".to_string()),
             ':'.try_into().unwrap(),
             Token::Boolean(true),
             ','.try_into().unwrap(),
+            '\n'.try_into().unwrap(),
             Token::JsonString("key4".to_string()),
             ':'.try_into().unwrap(),
             Token::Null,
+            '\n'.try_into().unwrap(),
             '}'.try_into().unwrap(),
         ];
         assert_eq!(*res, expected);
