@@ -13,7 +13,7 @@ pub mod constants {
     pub const COMMA: char = ',';
 }
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, PartialEq, Default, Clone)]
 pub struct Character(char);
 
 impl Character {
@@ -42,7 +42,7 @@ impl TryFrom<char> for Character {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     JsonString(String),
     Number(f32),
