@@ -2,6 +2,7 @@ use thiserror::Error;
 
 use super::lexer::*;
 
+#[derive(Debug, PartialEq)]
 pub enum JsonValue {
     String(String),
     Number(f32),
@@ -9,12 +10,16 @@ pub enum JsonValue {
     JsonArray(Vec<JsonValue>),
     Boolean(bool),
     Null,
+    Empty,
 }
 
 #[derive(Error, Debug)]
 pub enum ParseError {
     #[error("Non matching parantheses")]
     InvalidParantheses,
+
+    #[error("Could not parse json")]
+    InvalidJsonFormat,
 }
 
 fn valid_parantheses(token_stream: &TokenStream) -> bool {
@@ -55,6 +60,16 @@ pub fn parse(input_stream: TokenStream) -> Result<JsonValue, ParseError> {
         return Err(ParseError::InvalidParantheses);
     }
 
+    if input_stream.is_empty() {
+        return Ok(JsonValue::Empty);
+    }
+
+    if input_stream[0] != constants::LEFT_BRACE.into()
+        || input_stream[0] != constants::LEFT_BRACKET.into()
+    {
+        return Err(ParseError::InvalidJsonFormat);
+    }
+
     todo!("Parse object or array");
 }
 
@@ -92,6 +107,7 @@ pub mod syntactic_analyzer_tests {
         let token_stream = TokenStream::default();
 
         assert!(valid_parantheses(&token_stream));
+        assert_eq!(parse(token_stream).unwrap(), JsonValue::Empty);
     }
 
     #[test]
