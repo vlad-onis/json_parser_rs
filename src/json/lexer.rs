@@ -14,7 +14,7 @@ pub mod constants {
 }
 
 #[derive(Debug, PartialEq, Default, Clone)]
-pub struct Character(char);
+pub struct Character(pub char);
 
 impl Character {
     pub fn new(ch: char) -> Result<Character, LexerError> {
