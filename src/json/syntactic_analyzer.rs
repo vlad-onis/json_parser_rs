@@ -3,23 +3,37 @@ use thiserror::Error;
 use super::lexer::*;
 
 #[derive(Debug, PartialEq)]
+pub struct JsonPair(pub String, pub JsonValue);
+
+#[derive(Debug, PartialEq)]
 pub enum JsonValue {
     String(String),
     Number(f32),
-    JsonObject(Vec<(String, JsonValue)>),
+    JsonObject(Vec<JsonPair>),
     JsonArray(Vec<JsonValue>),
     Boolean(bool),
     Null,
-    Empty,
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, PartialEq)]
 pub enum ParseError {
     #[error("Non matching parantheses")]
     InvalidParantheses,
 
-    #[error("Could not parse json")]
-    InvalidJsonFormat,
+    #[error("Could not parse object or array, due to invalid first token")]
+    NotValidJsonObjectOrArray,
+
+    #[error("Empty Object")]
+    EmptyObject,
+
+    #[error("Could not parse pair")]
+    InvalidPair,
+
+    #[error("Could not parse value")]
+    InvalidValue,
+
+    #[error("Empty json is invalid")]
+    EmptyJson,
 }
 
 fn valid_parantheses(token_stream: &TokenStream) -> bool {
@@ -33,7 +47,7 @@ fn valid_parantheses(token_stream: &TokenStream) -> bool {
             parantheses_stack.push(token.to_owned());
         } else {
             match *token {
-                Token::JsonCharacter(_) => {
+                Token::JsonCharacter(Character('}')) | Token::JsonCharacter(Character(']')) => {
                     let last_inserted = parantheses_stack.pop();
                     if last_inserted.is_none() {
                         return false;
@@ -45,9 +59,15 @@ fn valid_parantheses(token_stream: &TokenStream) -> bool {
                     {
                         return false;
                     }
+
+                    if (*token == constants::RIGHT_BRACKET.into())
+                        && !(last_inserted == constants::LEFT_BRACKET.into())
+                    {
+                        return false;
+                    }
                 }
                 _ => {
-                    return false;
+                    continue;
                 }
             }
         }
@@ -55,38 +75,90 @@ fn valid_parantheses(token_stream: &TokenStream) -> bool {
     true
 }
 
-pub fn parse(input_stream: TokenStream) -> Result<JsonValue, ParseError> {
+pub fn parse(mut input_stream: TokenStream) -> Result<JsonValue, ParseError> {
     if !valid_parantheses(&input_stream) {
         return Err(ParseError::InvalidParantheses);
     }
 
     if input_stream.is_empty() {
-        return Ok(JsonValue::Empty);
+        return Err(ParseError::EmptyJson);
     }
 
     if input_stream[0] != constants::LEFT_BRACE.into()
-        || input_stream[0] != constants::LEFT_BRACKET.into()
+        && input_stream[0] != constants::LEFT_BRACKET.into()
     {
-        return Err(ParseError::InvalidJsonFormat);
+        return Err(ParseError::NotValidJsonObjectOrArray);
     }
 
-    todo!("Parse object or array");
+    input_stream.retain(|x| *x != '\n'.into());
+
+    parse_object(&mut input_stream[1..])
 }
 
-pub fn parse_object(token_stream: &Vec<Token>, current_index: usize) {
-    todo!("Parse object members");
+pub fn parse_object(mut token_stream: &mut [Token]) -> Result<JsonValue, ParseError> {
+    let members = parse_object_members(&mut token_stream.to_vec())?;
+    Ok(JsonValue::JsonObject(members))
 }
 
-pub fn parse_object_members(token_stream: &Vec<Token>, current_index: usize) {
-    todo!("Parse pair");
+pub fn parse_object_members(mut token_stream: &mut [Token]) -> Result<Vec<JsonPair>, ParseError> {
+    let mut pair_index = 0;
+    let mut result = Vec::new();
+    while pair_index < token_stream.len() {
+        let pair = parse_pair(&mut token_stream[pair_index..]);
+
+        match pair {
+            Ok(pair) => {
+                result.push(pair);
+                pair_index += 3;
+            }
+            Err(ParseError::EmptyObject) => {
+                token_stream = &mut token_stream[1..];
+                break;
+            }
+            Err(e) => {
+                return Err(e);
+            }
+        }
+    }
+
+    Ok(result)
 }
 
-pub fn parse_pair(token_stream: &Vec<Token>, current_index: usize) {
-    todo!("Ensure pair structure and parse value");
+pub fn parse_pair(mut token_stream: &mut [Token]) -> Result<JsonPair, ParseError> {
+    if token_stream.len() < 3 {
+        if token_stream[0] != '}'.into() {
+            return Err(ParseError::InvalidPair);
+        } else {
+            return Err(ParseError::EmptyObject);
+        }
+    }
+
+    if token_stream[0] == ','.into() {
+        token_stream = &mut token_stream[1..];
+    }
+
+    let Token::JsonString(name) = token_stream[0].clone() else {
+        return Err(ParseError::InvalidPair);
+    };
+
+    if token_stream[1] != ':'.into() {
+        return Err(ParseError::InvalidPair);
+    }
+
+    let value = parse_value(&token_stream[2..])?;
+    let result: JsonPair = JsonPair(name, value);
+    Ok(result)
 }
 
-pub fn parse_value(token_stream: &Vec<Token>, current_index: usize) {
-    todo!("determine the value type: String, Number, Boolean, Object, Array, Null");
+pub fn parse_value(token_stream: &[Token]) -> Result<JsonValue, ParseError> {
+    match &token_stream[0] {
+        Token::JsonString(st) => Ok(JsonValue::String(st.to_owned())),
+        Token::Number(nr) => Ok(JsonValue::Number(nr.to_owned())),
+        Token::Boolean(b) => Ok(JsonValue::Boolean(b.to_owned())),
+        Token::JsonCharacter(_) => Err(ParseError::InvalidValue),
+        Token::Null => Ok(JsonValue::Null),
+        Token::Other(_) => Err(ParseError::InvalidValue),
+    }
 }
 
 pub fn parse_array(token_stream: &Vec<Token>, current_index: usize) {
@@ -107,7 +179,7 @@ pub mod syntactic_analyzer_tests {
         let token_stream = TokenStream::default();
 
         assert!(valid_parantheses(&token_stream));
-        assert_eq!(parse(token_stream).unwrap(), JsonValue::Empty);
+        assert_eq!(parse(token_stream).err(), Some(ParseError::EmptyJson));
     }
 
     #[test]
@@ -135,5 +207,95 @@ pub mod syntactic_analyzer_tests {
         token_stream.push(constants::RIGHT_BRACE.into());
 
         assert!(valid_parantheses(&token_stream));
+    }
+
+    #[test]
+    pub fn test_parantheses_valid_json() {
+        let mut token_stream = TokenStream::default();
+        token_stream.push(constants::LEFT_BRACE.into());
+        token_stream.push(Token::JsonString(String::from("key")));
+        token_stream.push(':'.into());
+        token_stream.push(Token::JsonString(String::from("value")));
+        token_stream.push(constants::RIGHT_BRACE.into());
+
+        assert!(valid_parantheses(&token_stream));
+    }
+
+    #[test]
+    pub fn test_parse_empty_object() {
+        let mut token_stream = TokenStream::default();
+        token_stream.push(constants::LEFT_BRACE.into());
+        token_stream.push(constants::RIGHT_BRACE.into());
+
+        let res = parse(token_stream).unwrap();
+        assert_eq!(res, JsonValue::JsonObject(vec![]));
+    }
+
+    #[test]
+    pub fn test_parse_1_member_string() {
+        let mut token_stream = TokenStream::default();
+        token_stream.push(constants::LEFT_BRACE.into());
+        token_stream.push(Token::JsonString(String::from("key")));
+        token_stream.push(':'.into());
+        token_stream.push(Token::JsonString(String::from("value")));
+        token_stream.push(constants::RIGHT_BRACE.into());
+        let res = parse(token_stream).unwrap();
+        assert_eq!(
+            res,
+            JsonValue::JsonObject(vec![JsonPair(
+                "key".to_string(),
+                JsonValue::String("value".to_string())
+            )])
+        );
+    }
+
+    #[test]
+    pub fn test_parse_2_member_string_and_number() {
+        let mut token_stream = TokenStream::default();
+        token_stream.push(constants::LEFT_BRACE.into());
+        token_stream.push(Token::JsonString(String::from("key1")));
+        token_stream.push(':'.into());
+        token_stream.push(Token::JsonString(String::from("value")));
+        token_stream.push(Token::JsonString(String::from("key2")));
+        token_stream.push(':'.into());
+        token_stream.push(Token::Number(1.0));
+        token_stream.push(constants::RIGHT_BRACE.into());
+        let res = parse(token_stream).unwrap();
+        assert_eq!(
+            res,
+            JsonValue::JsonObject(vec![
+                JsonPair("key1".to_string(), JsonValue::String("value".to_string())),
+                JsonPair("key2".to_string(), JsonValue::Number(1.0))
+            ])
+        );
+    }
+
+    #[test]
+    pub fn test_parse_all_members() {
+        let mut token_stream = TokenStream::default();
+        token_stream.push(constants::LEFT_BRACE.into());
+        token_stream.push(Token::JsonString(String::from("key1")));
+        token_stream.push(':'.into());
+        token_stream.push(Token::JsonString(String::from("value")));
+        token_stream.push(Token::JsonString(String::from("key2")));
+        token_stream.push(':'.into());
+        token_stream.push(Token::Number(1.0));
+        token_stream.push(Token::JsonString(String::from("key3")));
+        token_stream.push(':'.into());
+        token_stream.push(Token::Boolean(true));
+        token_stream.push(Token::JsonString(String::from("key4")));
+        token_stream.push(':'.into());
+        token_stream.push(Token::Null);
+        token_stream.push(constants::RIGHT_BRACE.into());
+        let res = parse(token_stream).unwrap();
+        assert_eq!(
+            res,
+            JsonValue::JsonObject(vec![
+                JsonPair("key1".to_string(), JsonValue::String("value".to_string())),
+                JsonPair("key2".to_string(), JsonValue::Number(1.0)),
+                JsonPair("key3".to_string(), JsonValue::Boolean(true),),
+                JsonPair("key4".to_string(), JsonValue::Null,)
+            ])
+        );
     }
 }
