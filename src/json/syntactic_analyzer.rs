@@ -43,7 +43,7 @@ fn valid_parantheses(token_stream: &TokenStream) -> bool {
     for token in token_stream.iter() {
         // for token in token_stream.clone().into_iter() {
         // or together the other types of parantheses here, later
-        if *token == constants::LEFT_BRACE.into() {
+        if *token == constants::LEFT_BRACE.into() || *token == constants::LEFT_BRACKET.into() {
             parantheses_stack.push(token.to_owned());
         } else {
             match *token {
