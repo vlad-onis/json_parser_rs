@@ -32,8 +32,6 @@ impl TryFrom<char> for Character {
             || ch == constants::LEFT_BRACE
             || ch == constants::RIGHT_BRACE
             || ch == constants::COLUMN
-            || ch == constants::NEW_LINE
-            || ch == constants::COMMA
         {
             return Ok(Character(ch));
         }
@@ -59,6 +57,16 @@ impl From<char> for Token {
             Ok(character_token) => Token::JsonCharacter(character_token),
             Err(_e) => Token::Other(ch),
         }
+    }
+}
+
+impl Token {
+    pub fn is_other(&self) -> bool {
+        if let Token::Other(_) = self {
+            return true;
+        }
+
+        false
     }
 }
 
@@ -106,6 +114,12 @@ pub enum LexerError {
 
     #[error("Failed to lex the input json")]
     InvalidJson,
+
+    #[error("Token stream is empty")]
+    EmptyStream,
+
+    #[error("Token stream second to last char is a comma")]
+    EndingInComma,
 }
 
 // (The content between quotes, the index of the next char after the quote)
@@ -246,6 +260,9 @@ pub fn lex_character(json_content: &str) -> Result<Token, LexerError> {
 
 pub fn lex(json_content: &str) -> Result<TokenStream, LexerError> {
     let mut json_content = json_content.trim();
+    if json_content.is_empty() {
+        return Err(LexerError::EmptyInput);
+    }
     let mut tokens = TokenStream::default();
 
     loop {
@@ -284,6 +301,8 @@ pub fn lex(json_content: &str) -> Result<TokenStream, LexerError> {
                     if ch == ' ' {
                         json_content = crop_content(json_content, 0);
                         continue;
+                    } else if ch == '\n' || ch == ',' {
+                        tokens.push(result);
                     } else {
                         return Err(LexerError::InvalidJson);
                     }
@@ -310,7 +329,23 @@ pub fn lex(json_content: &str) -> Result<TokenStream, LexerError> {
         }
     }
 
+    let _ = validate_stream(&mut tokens)?;
+
     Ok(tokens)
+}
+
+fn validate_stream(stream: &mut TokenStream) -> Result<(), LexerError> {
+    if stream.len() <= 1 {
+        return Err(LexerError::EmptyStream);
+    }
+
+    let stream_size = stream.len();
+    if stream[stream_size - 2] == ','.into() {
+        return Err(LexerError::EndingInComma);
+    }
+
+    stream.retain(|token| !token.is_other());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -349,11 +384,7 @@ pub mod lexer_tests {
         let json = json.trim();
 
         let res = lex(json).unwrap();
-        let expected = vec![
-            '{'.try_into().unwrap(),
-            '\n'.try_into().unwrap(),
-            '}'.try_into().unwrap(),
-        ];
+        let expected = vec!['{'.try_into().unwrap(), '}'.try_into().unwrap()];
         assert_eq!(*res, expected);
     }
 
@@ -370,11 +401,9 @@ pub mod lexer_tests {
 
         let expected = vec![
             '{'.try_into().unwrap(),
-            '\n'.try_into().unwrap(),
             Token::JsonString("key".to_string()),
             ':'.try_into().unwrap(),
             Token::JsonString("value".to_string()),
-            '\n'.try_into().unwrap(),
             '}'.try_into().unwrap(),
         ];
 
@@ -439,11 +468,9 @@ pub mod lexer_tests {
 
         let expected = vec![
             '{'.try_into().unwrap(),
-            '\n'.try_into().unwrap(),
             Token::JsonString("key".to_string()),
             ':'.try_into().unwrap(),
             Token::Number(42.0),
-            '\n'.try_into().unwrap(),
             '}'.try_into().unwrap(),
         ];
 
@@ -497,11 +524,9 @@ pub mod lexer_tests {
         let res = lex(json).unwrap();
         let expected = vec![
             '{'.try_into().unwrap(),
-            '\n'.try_into().unwrap(),
             Token::JsonString("key".to_string()),
             ':'.try_into().unwrap(),
             Token::Boolean(true),
-            '\n'.try_into().unwrap(),
             '}'.try_into().unwrap(),
         ];
 
@@ -523,26 +548,18 @@ pub mod lexer_tests {
         let res = lex(json).unwrap();
         let expected = vec![
             '{'.try_into().unwrap(),
-            '\n'.try_into().unwrap(),
             Token::JsonString("key1".to_string()),
             ':'.try_into().unwrap(),
             Token::JsonString("string".to_string()),
-            ','.try_into().unwrap(),
-            '\n'.try_into().unwrap(),
             Token::JsonString("key2".to_string()),
             ':'.try_into().unwrap(),
             Token::Number(42.0),
-            ','.try_into().unwrap(),
-            '\n'.try_into().unwrap(),
             Token::JsonString("key3".to_string()),
             ':'.try_into().unwrap(),
             Token::Boolean(true),
-            ','.try_into().unwrap(),
-            '\n'.try_into().unwrap(),
             Token::JsonString("key4".to_string()),
             ':'.try_into().unwrap(),
             Token::Null,
-            '\n'.try_into().unwrap(),
             '}'.try_into().unwrap(),
         ];
         assert_eq!(*res, expected);

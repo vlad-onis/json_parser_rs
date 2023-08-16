@@ -36,3 +36,9 @@ Our grammar will be defined in BNF (Backus Naur Form) as below:
 ```
 
 The grammar above will not be implemented entirely for this example but the code demonstrates the parsing of basic json excluding complex corner-cases.
+
+Please NOTE: the current implementation of the syntactic analyser needs to be reworked because it is not able to support inner objects and arrays.
+
+## Conclusion
+
+This json parser is a pure didactic project, unable to handle json edge cases. It is not maintained and will not be continued.
